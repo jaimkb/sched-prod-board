@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "serve": "npx --yes serve@14.2.4 dist",
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "deploy": "npm run build && ../../schema-first/node_modules/.bin/wrangler deploy"
   },
   "devDependencies": {
     "playwright": "1.64.1"
