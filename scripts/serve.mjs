@@ -1,12 +1,15 @@
 // Serves dist/ on localhost with no dependencies: node scripts/serve.mjs [port]
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
+import { extname, join } from 'node:path';
 
 const port = Number(process.argv[2] ?? 4173);
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.webm': 'video/webm', '.mp4': 'video/mp4' };
 createServer(async (req, res) => {
-  const path = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname)).replace(/^([\/])+/, '');
+  const path = decodeURIComponent(new URL(req.url, 'http://x').pathname)
+    .split('/')
+    .filter((part) => part && part !== '..')
+    .join('/');
   try {
     const body = await readFile(join(import.meta.dirname, '..', 'dist', path || 'index.html'));
     res.writeHead(200, { 'content-type': types[extname(path || '.html')] ?? 'application/octet-stream' });
