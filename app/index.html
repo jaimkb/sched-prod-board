@@ -11,13 +11,26 @@
   <body>
     <header>
       <h1>incidents</h1>
-      <p class="sub">sched-prod · tonight</p>
+      <p class="sub">sched-prod · tonight · open an incident to ack it</p>
     </header>
     <main data-testid="board" aria-busy="true">
-      <div data-testid="loader" class="loader" role="status"><span class="spinner"></span>Loading incidents…</div>
-      <p data-testid="empty" class="empty" hidden>No incidents tonight.</p>
-      <ul data-testid="incident-list" class="list" hidden></ul>
-      <p class="status" aria-live="polite"></p>
+      <section class="feed">
+        <div data-testid="loader" class="loader" role="status"><span class="spinner"></span>Loading incidents…</div>
+        <p data-testid="empty" class="empty" hidden>No incidents tonight.</p>
+        <ul data-testid="incident-list" class="list" hidden></ul>
+        <p class="status" aria-live="polite"></p>
+      </section>
+      <aside data-testid="incident-panel" class="panel" tabindex="-1" aria-label="Incident" hidden>
+        <div class="panel-head">
+          <h2 class="panel-id"></h2>
+          <button type="button" class="panel-close" aria-label="Close">×</button>
+        </div>
+        <p><span class="panel-sev"></span></p>
+        <p class="panel-what"></p>
+        <p class="panel-time">Opened <time></time></p>
+        <button type="button" data-testid="panel-ack" class="panel-ack">Ack</button>
+        <p class="panel-note" aria-live="polite"></p>
+      </aside>
     </main>
     <footer>sched-prod incident board · build <code data-testid="build-sha">__BUILD_SHA__</code></footer>
   </body>
