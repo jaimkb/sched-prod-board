@@ -89,7 +89,6 @@ async function clip(file, { locale, timezoneId, label, offset }, script) {
 }
 
 const rowIds = (page) => page.$$eval('[data-testid="incident-row"]', (rows) => rows.map((r) => r.dataset.id));
-const ackBox = (page, id) => page.locator(`[data-testid="incident-row"][data-id="${id}"] [data-testid="ack"]`).boundingBox();
 const notes = [];
 
 // Clip 1 — the viewer's own machine (en-US, Chicago): open-board, watch-board, ack-incident.
@@ -106,36 +105,34 @@ const main = await clip('clip-1.mp4', { locale: 'en-US', timezoneId: 'America/Ch
   notes.push({ flow: 'watch-board', at: at(), arrived: (await rowIds(page))[0], previousTop: before });
   await sleep(3000);
 
-  // ack-incident, calm: the list is still, click the third row's Ack.
-  const calmTarget = (await rowIds(page))[2];
-  await caption(`ack-incident: on-call takes ${calmTarget}`);
-  const calm = await ackBox(page, calmTarget);
-  await page.mouse.move(calm.x + calm.width / 2, calm.y + calm.height / 2, { steps: 15 });
-  await sleep(600);
-  notes.push({ flow: 'ack-incident', kind: 'calm', at: at(), aimedAt: calmTarget });
-  await page.mouse.click(calm.x + calm.width / 2, calm.y + calm.height / 2);
-  await page.locator(`[data-testid="incident-row"][data-id="${calmTarget}"] [data-testid="acked"]`).waitFor();
-  await sleep(3000);
-
-  // ack-incident, while the board moves: aim at a row, a new incident lands, the click lands where the pointer is.
-  const ids = await rowIds(page);
-  const aimed = ids.find((id, i) => i >= 1 && i <= 4 && id !== calmTarget);
-  await caption(`ack-incident: on-call aims at ${aimed} as a new incident comes in`);
-  const box = await ackBox(page, aimed);
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
+  // ack-incident (SCHED-4515): open a row, keep the pointer on the panel's Ack while a new incident lands, then click.
+  const target = (await rowIds(page))[2];
+  await caption(`ack-incident: on-call opens ${target}`);
+  const rowBox = await page.locator(`[data-testid="incident-row"][data-id="${target}"]`).boundingBox();
+  await page.mouse.move(rowBox.x + rowBox.width / 3, rowBox.y + rowBox.height / 2, { steps: 15 });
+  await sleep(500);
+  await page.mouse.click(rowBox.x + rowBox.width / 3, rowBox.y + rowBox.height / 2);
+  await page.locator(`[data-testid="incident-panel"][data-id="${target}"]`).waitFor();
+  notes.push({ flow: 'ack-incident', kind: 'open-panel', at: at(), opened: target, panel: await page.getAttribute('[data-testid="incident-panel"]', 'data-id') });
+  await sleep(1500);
+  await caption(`the panel names ${target}; pointer on its Ack while a new incident comes in`);
+  const ackBtn = await page.locator('[data-testid="panel-ack"]').boundingBox();
+  const x = ackBtn.x + ackBtn.width / 2;
+  const y = ackBtn.y + ackBtn.height / 2;
   await page.mouse.move(x, y, { steps: 15 });
   const top = (await rowIds(page))[0];
   await page.waitForFunction((id) => document.querySelector('[data-testid="incident-row"]').dataset.id !== id, top, { timeout: 30000, polling: 20 });
   const shiftAt = at();
-  await sleep(150); // a person's click lands a moment after the row moved
-  const under = await page.evaluate(([px, py]) => document.elementFromPoint(px, py)?.closest('[data-testid="incident-row"]')?.dataset.id, [x, y]);
-  notes.push({ flow: 'ack-incident', kind: 'shift', shiftAt, at: at(), aimedAt: aimed, underPointer: under });
+  await sleep(150); // the same 0.15 s after the list moved as in the step-one recording
+  const panelId = await page.getAttribute('[data-testid="incident-panel"]', 'data-id');
+  notes.push({ flow: 'ack-incident', kind: 'shift', shiftAt, at: at(), expected: target, panelId, newTop: (await rowIds(page))[0] });
   await page.mouse.click(x, y);
-  await sleep(1500);
-  const actually = acks.at(-1)?.id;
-  await caption(`aimed at ${aimed} → the click acked ${actually}; ${aimed} still open`);
-  await sleep(5000);
+  await page.locator(`[data-testid="incident-row"][data-id="${target}"] [data-testid="acked"]`).waitFor();
+  await sleep(500);
+  const got = acks.at(-1)?.id;
+  notes.push({ flow: 'ack-incident', kind: 'result', at: at(), expected: target, got });
+  await caption(`rows moved, the panel did not: expected ${target}, acked ${got}`);
+  await sleep(6000);
 });
 
 // Clips 2 and 3 — the same board as viewers in Auckland and Berlin see it (R5), oldest row in view.
