@@ -1,9 +1,10 @@
-// Records the deployed board in use with Playwright in the installed Edge, then joins the clips into one mp4.
+// Records the deployed board in use with Playwright in the installed Edge (frames from the DevTools screencast,
+// encoded with the system ffmpeg), then joins the clips into one mp4.
 // node scripts/record.mjs <board url> <out name>
 // Writes recordings/<out name>.mp4 and .rec-tmp/<out name>.json (each ack's video time, intent and receipt).
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 
 const [url, name] = process.argv.slice(2);
 if (!url || !name) throw new Error('usage: node scripts/record.mjs <board url> <out name>');
@@ -15,8 +16,7 @@ const size = { width: 1100, height: 640 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // A recording overlay (not part of the build): video clock, caption and a cursor dot.
-const overlay = ({ offset, label }) => {
-  const t0 = performance.now();
+const overlay = ({ offset, label, t0 }) => {
   const pad = (n) => String(Math.floor(n)).padStart(2, '0');
   addEventListener('DOMContentLoaded', () => {
     const box = document.createElement('div');
@@ -35,7 +35,7 @@ const overlay = ({ offset, label }) => {
     addEventListener('mouseup', () => setTimeout(() => (dot.style.background = '#e003'), 250));
     window.__caption = '';
     const tick = () => {
-      const s = offset + (performance.now() - t0) / 1000;
+      const s = offset + (Date.now() - t0) / 1000;
       box.textContent = `recording ${pad(s / 60)}:${pad(s % 60)} · viewer ${label} · ${window.__caption}`;
       requestAnimationFrame(tick);
     };
@@ -51,11 +51,17 @@ async function clip(file, { locale, timezoneId, label, offset }, script) {
     locale,
     timezoneId,
     viewport: size,
-    recordVideo: { dir: tmp, size },
   });
-  await context.addInitScript(overlay, { offset, label });
+  const t0 = Date.now(); // video time 0 for this clip; the overlay clock counts from it too
+  await context.addInitScript(overlay, { offset, label, t0 });
   const page = await context.newPage();
-  const t0 = Date.now();
+  const frames = [];
+  const cdp = await context.newCDPSession(page);
+  cdp.on('Page.screencastFrame', async ({ data, metadata, sessionId }) => {
+    frames.push({ data, ts: metadata.timestamp });
+    await cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+  });
+  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 85, maxWidth: size.width, maxHeight: size.height, everyNthFrame: 1 });
   const at = () => offset + (Date.now() - t0) / 1000;
   page.on('console', (msg) => {
     const m = msg.text().match(/^ack (\S+) (\S+) (\S+)$/);
@@ -63,10 +69,23 @@ async function clip(file, { locale, timezoneId, label, offset }, script) {
   });
   const caption = (text) => page.evaluate((t) => (window.__caption = t), text);
   await script({ page, caption, at });
+  await cdp.send('Page.stopScreencast');
+  const seconds = (Date.now() - t0) / 1000;
   await context.close();
-  const video = readdirSync(tmp).find((f) => f.endsWith('.webm') && !f.startsWith('clip-'));
-  renameSync(`${tmp}/${video}`, `${tmp}/${file}`);
-  return (Date.now() - t0) / 1000;
+  // Hold each frame until the next one, so video time matches wall time from t0.
+  const dir = `${tmp}/${file}-frames`;
+  mkdirSync(dir);
+  const lines = [];
+  frames.forEach((f, i) => {
+    writeFileSync(`${dir}/${i}.jpg`, Buffer.from(f.data, 'base64'));
+    const next = i + 1 < frames.length ? frames[i + 1].ts : t0 / 1000 + seconds;
+    const from = i === 0 ? t0 / 1000 : f.ts; // the first frame holds from video time 0
+    lines.push(`file '${i}.jpg'`, `duration ${Math.max(next - from, 0.001).toFixed(3)}`);
+  });
+  lines.push(`file '${frames.length - 1}.jpg'`);
+  writeFileSync(`${dir}/list.txt`, lines.join('\n'));
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', `${dir}/list.txt`, '-vf', 'fps=25,scale=1100:640', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', `${tmp}/${file}`]);
+  return seconds;
 }
 
 const rowIds = (page) => page.$$eval('[data-testid="incident-row"]', (rows) => rows.map((r) => r.dataset.id));
@@ -74,7 +93,7 @@ const ackBox = (page, id) => page.locator(`[data-testid="incident-row"][data-id=
 const notes = [];
 
 // Clip 1 — the viewer's own machine (en-US, Chicago): open-board, watch-board, ack-incident.
-const main = await clip('clip-1.webm', { locale: 'en-US', timezoneId: 'America/Chicago', label: 'en-US · Chicago', offset: 0 }, async ({ page, caption, at }) => {
+const main = await clip('clip-1.mp4', { locale: 'en-US', timezoneId: 'America/Chicago', label: 'en-US · Chicago', offset: 0 }, async ({ page, caption, at }) => {
   await page.goto(url);
   await caption('open-board: the board loads tonight\'s incidents');
   await page.locator('[data-testid="incident-row"]').first().waitFor();
@@ -122,8 +141,8 @@ const main = await clip('clip-1.webm', { locale: 'en-US', timezoneId: 'America/C
 // Clips 2 and 3 — the same board as viewers in Auckland and Berlin see it (R5), oldest row in view.
 let offset = main;
 for (const [file, locale, timezoneId, label] of [
-  ['clip-2.webm', 'en-NZ', 'Pacific/Auckland', 'en-NZ · Auckland'],
-  ['clip-3.webm', 'de-DE', 'Europe/Berlin', 'de-DE · Berlin'],
+  ['clip-2.mp4', 'en-NZ', 'Pacific/Auckland', 'en-NZ · Auckland'],
+  ['clip-3.mp4', 'de-DE', 'Europe/Berlin', 'de-DE · Berlin'],
 ]) {
   offset += await clip(file, { locale, timezoneId, label, offset }, async ({ page, caption, at }) => {
     await page.goto(url);
@@ -138,7 +157,7 @@ for (const [file, locale, timezoneId, label] of [
 await browser.close();
 
 const list = `${tmp}/list.txt`;
-writeFileSync(list, ['clip-1.webm', 'clip-2.webm', 'clip-3.webm'].map((f) => `file '${f}'`).join('\n'));
-execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', `recordings/${name}.mp4`]);
+writeFileSync(list, ['clip-1.mp4', 'clip-2.mp4', 'clip-3.mp4'].map((f) => `file '${f}'`).join('\n'));
+execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', `recordings/${name}.mp4`]);
 writeFileSync(`.rec-tmp/${name}.json`, JSON.stringify({ url, notes, acks, seconds: offset }, null, 2));
 console.log(JSON.stringify({ notes, acks: acks.map((a) => ({ ...a, receipt: a.receipt.slice(0, 8) + '…' })), seconds: offset }, null, 2));
