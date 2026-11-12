@@ -32,4 +32,10 @@ main[data-testid="board"] { display: grid; grid-template-columns: minmax(0, 960p
 .panel-ack { font: 600 15px system-ui, sans-serif; width: 100%; padding: 10px; border: 0; border-radius: 8px; background: #1d1d1f; color: #fff; cursor: pointer; }
 .panel-ack:disabled { background: #1a7f37; cursor: default; }
 .panel-note { color: #1a7f37; font-size: 13px; }
-@media (max-width: 1000px) { main[data-testid="board"] { grid-template-columns: 1fr; } .panel { position: fixed; left: 12px; right: 12px; bottom: 12px; top: auto; } }
+@media (max-width: 1000px) {
+  header, main, footer { padding: 12px 16px; }
+  main[data-testid="board"] { grid-template-columns: minmax(0, 1fr); }
+  .panel { order: -1; position: sticky; top: 0; z-index: 1; }
+  .row { grid-template-columns: 80px 40px minmax(0, 1fr) auto; grid-template-areas: "id sev time acked" "what what what what"; row-gap: 2px; padding: 8px 12px; }
+  .row .id { grid-area: id; } .row .sev { grid-area: sev; } .row time { grid-area: time; } .row .acked { grid-area: acked; padding: 0; } .row .what { grid-area: what; }
+}
